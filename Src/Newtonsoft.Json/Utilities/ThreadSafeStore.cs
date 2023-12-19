@@ -63,9 +63,12 @@ namespace Newtonsoft.Json.Utilities
 #if HAVE_CONCURRENT_DICTIONARY
             return _concurrentStore.GetOrAdd(key, _creator);
 #else
-            if (!_store.TryGetValue(key, out TValue value))
+            lock (_lock)
             {
-                return AddValue(key);
+                if (!_store.TryGetValue(key, out TValue value))
+                {
+                    return AddValue(key);
+                }
             }
 
             return value;
@@ -77,32 +80,29 @@ namespace Newtonsoft.Json.Utilities
         {
             TValue value = _creator(key);
 
-            lock (_lock)
+            if (_store == null)
             {
-                if (_store == null)
+                _store = new Dictionary<TKey, TValue>();
+                _store[key] = value;
+            }
+            else
+            {
+                // double check locking
+                if (_store.TryGetValue(key, out TValue checkValue))
                 {
-                    _store = new Dictionary<TKey, TValue>();
-                    _store[key] = value;
+                    return checkValue;
                 }
-                else
-                {
-                    // double check locking
-                    if (_store.TryGetValue(key, out TValue checkValue))
-                    {
-                        return checkValue;
-                    }
 
-                    Dictionary<TKey, TValue> newStore = new Dictionary<TKey, TValue>(_store);
-                    newStore[key] = value;
+                Dictionary<TKey, TValue> newStore = new Dictionary<TKey, TValue>(_store);
+                newStore[key] = value;
 
 #if HAVE_MEMORY_BARRIER
-                    Thread.MemoryBarrier();
+                Thread.MemoryBarrier();
 #endif
-                    _store = newStore;
-                }
-
-                return value;
+                _store = newStore;
             }
+
+            return value;
         }
 #endif
     }
